@@ -1,108 +1,150 @@
 // ============================================================
 // src/db/hooks/useStock.ts
+// Hook React pour la gestion des vêtements en IndexedDB
+// Fournit : liste des vêtements + fonctions CRUD + changement de statut
 // ============================================================
-
+ 
 import { useState, useEffect, useCallback } from "react";
 import {
-  dbAjouter, dbGetTous, dbGetParId,
-  dbMettreAJour, dbSupprimer, genererUUID,
+  dbAjouter, dbGetTous, dbGetParId, dbGetParIndex,
+  dbMettreAJour, dbSupprimer, genererUUID, genererNumeroTicket,
 } from "../index";
 import { STORES } from "../schema";
-import type { ArticleStock, CreateStockDTO, UpdateStockDTO } from "../../types";
-
-export function useStock() {
-  const [articles, setArticles] = useState<ArticleStock[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [erreur,   setErreur]   = useState<string | null>(null);
-
-  // ── Charger ────────────────────────────────────────────────
+import type { Vetement, CreateVetementDTO, UpdateVetementDTO } from "../../types";
+import { StatutVetement } from "../../types";
+ 
+export function useVetements(idClientFiltre?: string) {
+  const [vetements, setVetements] = useState<Vetement[]>([]);
+  const [loading,   setLoading]   = useState<boolean>(true);
+  const [erreur,    setErreur]    = useState<string | null>(null);
+ 
+  // ── Charger les vêtements ──────────────────────────────────
   const charger = useCallback(async () => {
     try {
       setLoading(true);
       setErreur(null);
-      const data = await dbGetTous<ArticleStock>(STORES.STOCK);
-      setArticles(data);
+      let data = await dbGetTous<Vetement>(STORES.VETEMENTS);
+      // Filtrer par client si un filtre est passé
+      if (idClientFiltre) {
+        data = data.filter((v) => v.idClient === idClientFiltre);
+      }
+      setVetements(data);
     } catch (e) {
-      setErreur(String(e));
+      setErreur("Erreur lors du chargement des vêtements");
+      console.error(e);
     } finally {
       setLoading(false);
     }
-  }, []);
-
+  }, [idClientFiltre]);
+ 
   useEffect(() => { charger(); }, [charger]);
-
-  // ── Ajouter un article ─────────────────────────────────────
-  const ajouterArticle = useCallback(
-    async (dto: CreateStockDTO): Promise<ArticleStock> => {
-      const nouveau: ArticleStock = {
+ 
+  // ── Enregistrer un vêtement ────────────────────────────────
+  const enregistrerVetement = useCallback(
+    async (dto: CreateVetementDTO): Promise<Vetement> => {
+      const nouveau: Vetement = {
         ...dto,
-        id:      genererUUID(),
-        dateMAJ: new Date().toISOString(),
+        id:           genererUUID(),
+        numeroTicket: genererNumeroTicket(),
+        idStatut:     StatutVetement.EN_ATTENTE,
+        dateDepot:    new Date().toISOString(),
       };
-      await dbAjouter<ArticleStock>(STORES.STOCK, nouveau);
-      setArticles((prev) => [...prev, nouveau]);
+      await dbAjouter<Vetement>(STORES.VETEMENTS, nouveau);
+      setVetements((prev) => [...prev, nouveau]);
       return nouveau;
     },
     []
   );
-
-  // ── Articles en alerte (stock faible) ─────────────────────
-  const getArticlesEnAlerte = useCallback(
-    (): ArticleStock[] => articles.filter((a) => a.quantite <= a.seuilAlerte),
-    [articles]
+ 
+  // ── Obtenir un vêtement par ID ─────────────────────────────
+  const getVetementParId = useCallback(
+    async (id: string): Promise<Vetement | undefined> =>
+      dbGetParId<Vetement>(STORES.VETEMENTS, id),
+    []
   );
-
-  // ── Mettre à jour la quantité ──────────────────────────────
-  const ajusterQuantite = useCallback(
-    async (id: string, delta: number): Promise<ArticleStock> => {
-      const existant = await dbGetParId<ArticleStock>(STORES.STOCK, id);
-      if (!existant) throw new Error("Article introuvable");
-
-      const majComplet: ArticleStock = {
-        ...existant,
-        quantite: Math.max(0, existant.quantite + delta),
-        dateMAJ:  new Date().toISOString(),
-      };
-      await dbMettreAJour<ArticleStock>(STORES.STOCK, majComplet);
-      setArticles((prev) => prev.map((a) => (a.id === id ? majComplet : a)));
+ 
+  // ── Vêtements d'un client ──────────────────────────────────
+  const getVetementsParClient = useCallback(
+    async (clientId: string): Promise<Vetement[]> =>
+      dbGetParIndex<Vetement>(STORES.VETEMENTS, "idClient", clientId),
+    []
+  );
+ 
+  // ── Filtrer par statut (côté mémoire) ─────────────────────
+  const filtrerParStatut = useCallback(
+    (statut: StatutVetement): Vetement[] =>
+      vetements.filter((v) => v.idStatut === statut),
+    [vetements]
+  );
+ 
+  const getLaves    = useCallback(
+    () => filtrerParStatut(StatutVetement.LAVE),
+    [filtrerParStatut]
+  );
+ 
+  const getNonLaves = useCallback(
+    () => vetements.filter((v) =>
+      v.idStatut === StatutVetement.EN_ATTENTE ||
+      v.idStatut === StatutVetement.EN_COURS
+    ),
+    [vetements]
+  );
+ 
+  // ── Modifier un vêtement ───────────────────────────────────
+  const modifierVetement = useCallback(
+    async (id: string, maj: UpdateVetementDTO): Promise<Vetement> => {
+      const existant = await dbGetParId<Vetement>(STORES.VETEMENTS, id);
+      if (!existant) throw new Error("Vêtement introuvable");
+ 
+      const majComplet: Vetement = { ...existant, ...maj };
+      await dbMettreAJour<Vetement>(STORES.VETEMENTS, majComplet);
+      setVetements((prev) => prev.map((v) => (v.id === id ? majComplet : v)));
       return majComplet;
     },
     []
   );
-
-  // ── Mettre à jour un article ───────────────────────────────
-  const mettreAJourArticle = useCallback(
-    async (id: string, maj: UpdateStockDTO): Promise<ArticleStock> => {
-      const existant = await dbGetParId<ArticleStock>(STORES.STOCK, id);
-      if (!existant) throw new Error("Article introuvable");
-
-      const majComplet: ArticleStock = {
-        ...existant,
-        ...maj,
-        dateMAJ: new Date().toISOString(),
-      };
-      await dbMettreAJour<ArticleStock>(STORES.STOCK, majComplet);
-      setArticles((prev) => prev.map((a) => (a.id === id ? majComplet : a)));
-      return majComplet;
+ 
+  // ── Changer le statut ──────────────────────────────────────
+  /**
+   * Workflow : en_attente → en_lavage → pret → recupere
+   */
+  const changerStatut = useCallback(
+    async (id: string, statut: StatutVetement): Promise<Vetement> => {
+      const extra: Partial<Vetement> = { idStatut: statut };
+      if (statut === StatutVetement.LAVE)     extra.dateLavage       = new Date().toISOString();
+      if (statut === StatutVetement.RECUPERE) extra.dateRecuperation = new Date().toISOString();
+      return modifierVetement(id, extra);
     },
-    []
+    [modifierVetement]
   );
-
-  // ── Supprimer ──────────────────────────────────────────────
-  const supprimerArticle = useCallback(async (id: string): Promise<void> => {
-    await dbSupprimer(STORES.STOCK, id);
-    setArticles((prev) => prev.filter((a) => a.id !== id));
+ 
+  const marquerEnCours  = useCallback((id: string) => changerStatut(id, StatutVetement.EN_COURS),  [changerStatut]);
+  const marquerLave     = useCallback((id: string) => changerStatut(id, StatutVetement.LAVE),      [changerStatut]);
+  const marquerRecupere = useCallback((id: string) => changerStatut(id, StatutVetement.RECUPERE),  [changerStatut]);
+ 
+  // ── Supprimer un vêtement ──────────────────────────────────
+  const supprimerVetement = useCallback(async (id: string): Promise<void> => {
+    await dbSupprimer(STORES.VETEMENTS, id);
+    setVetements((prev) => prev.filter((v) => v.id !== id));
   }, []);
-
+ 
   return {
-    articles,
+    vetements,
     loading,
     erreur,
     charger,
-    ajouterArticle,
-    getArticlesEnAlerte,
-    ajusterQuantite,
-    mettreAJourArticle,
-    supprimerArticle,
+    enregistrerVetement,
+    getVetementParId,
+    getVetementsParClient,
+    filtrerParStatut,
+    getLaves,
+    getNonLaves,
+    modifierVetement,
+    changerStatut,
+    marquerEnCours,
+    marquerLave,
+    marquerRecupere,
+    supprimerVetement,
   };
 }
+ 

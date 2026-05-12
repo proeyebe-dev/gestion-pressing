@@ -1,122 +1,149 @@
 // ============================================================
-// src/db/index.ts — Initialisation + couche CRUD générique
+// Hook React pour la gestion des vêtements en IndexedDB
+// Fournit : liste des vêtements + fonctions CRUD + changement de statut
 // ============================================================
-
-import { DB_NAME, DB_VERSION, initialiserSchema, type StoreName } from "./schema";
-
-// ── Singleton de connexion ───────────────────────────────────
-
-let _db: IDBDatabase | null = null;
-
-export async function ouvrirDB(): Promise<IDBDatabase> {
-  if (_db) return _db;
-
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-
-    req.onupgradeneeded = (e) => {
-      initialiserSchema((e.target as IDBOpenDBRequest).result);
-    };
-
-    req.onsuccess = (e) => {
-      _db = (e.target as IDBOpenDBRequest).result;
-
-      // Réinitialise le singleton si la connexion se ferme
-      _db.onclose = () => { _db = null; };
-      resolve(_db);
-    };
-
-    req.onerror = () =>
-      reject(new Error(`Impossible d'ouvrir la base : ${req.error?.message}`));
-
-    req.onblocked = () =>
-      console.warn("IndexedDB bloquée — fermez les autres onglets.");
-  });
+ 
+import { useState, useEffect, useCallback } from "react";
+import {
+  dbAjouter, dbGetTous, dbGetParId, dbGetParIndex,
+  dbMettreAJour, dbSupprimer, genererUUID, genererNumeroTicket,
+} from "../index";
+import { STORES } from "../schema";
+import type { Vetement, CreateVetementDTO, UpdateVetementDTO } from "../../types";
+import { StatutVetement } from "../../types";
+ 
+export function useVetements(idClientFiltre?: string) {
+  const [vetements, setVetements] = useState<Vetement[]>([]);
+  const [loading,   setLoading]   = useState<boolean>(true);
+  const [erreur,    setErreur]    = useState<string | null>(null);
+ 
+  // ── Charger les vêtements ──────────────────────────────────
+  const charger = useCallback(async () => {
+    try {
+      setLoading(true);
+      setErreur(null);
+      let data = await dbGetTous<Vetement>(STORES.VETEMENTS);
+      // Filtrer par client si un filtre est passé
+      if (idClientFiltre) {
+        data = data.filter((v) => v.idClient === idClientFiltre);
+      }
+      setVetements(data);
+    } catch (e) {
+      setErreur("Erreur lors du chargement des vêtements");
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [idClientFiltre]);
+ 
+  useEffect(() => { charger(); }, [charger]);
+ 
+  // ── Enregistrer un vêtement ────────────────────────────────
+  const enregistrerVetement = useCallback(
+    async (dto: CreateVetementDTO): Promise<Vetement> => {
+      const nouveau: Vetement = {
+        ...dto,
+        id:           genererUUID(),
+        numeroTicket: genererNumeroTicket(),
+        idStatut:     StatutVetement.EN_ATTENTE,
+        dateDepot:    new Date().toISOString(),
+      };
+      await dbAjouter<Vetement>(STORES.VETEMENTS, nouveau);
+      setVetements((prev) => [...prev, nouveau]);
+      return nouveau;
+    },
+    []
+  );
+ 
+  // ── Obtenir un vêtement par ID ─────────────────────────────
+  const getVetementParId = useCallback(
+    async (id: string): Promise<Vetement | undefined> =>
+      dbGetParId<Vetement>(STORES.VETEMENTS, id),
+    []
+  );
+ 
+  // ── Vêtements d'un client ──────────────────────────────────
+  const getVetementsParClient = useCallback(
+    async (clientId: string): Promise<Vetement[]> =>
+      dbGetParIndex<Vetement>(STORES.VETEMENTS, "idClient", clientId),
+    []
+  );
+ 
+  // ── Filtrer par statut (côté mémoire) ─────────────────────
+  const filtrerParStatut = useCallback(
+    (statut: StatutVetement): Vetement[] =>
+      vetements.filter((v) => v.idStatut === statut),
+    [vetements]
+  );
+ 
+  const getLaves    = useCallback(
+    () => filtrerParStatut(StatutVetement.LAVE),
+    [filtrerParStatut]
+  );
+ 
+  const getNonLaves = useCallback(
+    () => vetements.filter((v) =>
+      v.idStatut === StatutVetement.EN_ATTENTE ||
+      v.idStatut === StatutVetement.EN_COURS
+    ),
+    [vetements]
+  );
+ 
+  // ── Modifier un vêtement ───────────────────────────────────
+  const modifierVetement = useCallback(
+    async (id: string, maj: UpdateVetementDTO): Promise<Vetement> => {
+      const existant = await dbGetParId<Vetement>(STORES.VETEMENTS, id);
+      if (!existant) throw new Error("Vêtement introuvable");
+ 
+      const majComplet: Vetement = { ...existant, ...maj };
+      await dbMettreAJour<Vetement>(STORES.VETEMENTS, majComplet);
+      setVetements((prev) => prev.map((v) => (v.id === id ? majComplet : v)));
+      return majComplet;
+    },
+    []
+  );
+ 
+  // ── Changer le statut ──────────────────────────────────────
+  /**
+   * Workflow : en_attente → en_lavage → pret → recupere
+   */
+  const changerStatut = useCallback(
+    async (id: string, statut: StatutVetement): Promise<Vetement> => {
+      const extra: Partial<Vetement> = { idStatut: statut };
+      if (statut === StatutVetement.LAVE)     extra.dateLavage       = new Date().toISOString();
+      if (statut === StatutVetement.RECUPERE) extra.dateRecuperation = new Date().toISOString();
+      return modifierVetement(id, extra);
+    },
+    [modifierVetement]
+  );
+ 
+  const marquerEnCours  = useCallback((id: string) => changerStatut(id, StatutVetement.EN_COURS),  [changerStatut]);
+  const marquerLave     = useCallback((id: string) => changerStatut(id, StatutVetement.LAVE),      [changerStatut]);
+  const marquerRecupere = useCallback((id: string) => changerStatut(id, StatutVetement.RECUPERE),  [changerStatut]);
+ 
+  // ── Supprimer un vêtement ──────────────────────────────────
+  const supprimerVetement = useCallback(async (id: string): Promise<void> => {
+    await dbSupprimer(STORES.VETEMENTS, id);
+    setVetements((prev) => prev.filter((v) => v.id !== id));
+  }, []);
+ 
+  return {
+    vetements,
+    loading,
+    erreur,
+    charger,
+    enregistrerVetement,
+    getVetementParId,
+    getVetementsParClient,
+    filtrerParStatut,
+    getLaves,
+    getNonLaves,
+    modifierVetement,
+    changerStatut,
+    marquerEnCours,
+    marquerLave,
+    marquerRecupere,
+    supprimerVetement,
+  };
 }
-
-// ── Helpers transaction ──────────────────────────────────────
-
-async function tx(
-  store: StoreName,
-  mode: IDBTransactionMode = "readonly"
-): Promise<IDBObjectStore> {
-  const db = await ouvrirDB();
-  return db.transaction(store, mode).objectStore(store);
-}
-
-function promesse<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((res, rej) => {
-    req.onsuccess = () => res(req.result);
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-// ── CRUD générique ───────────────────────────────────────────
-
-/** Insère un nouvel enregistrement. */
-export async function dbAjouter<T>(store: StoreName, data: T): Promise<T> {
-  const s = await tx(store, "readwrite");
-  await promesse(s.add(data));
-  return data;
-}
-
-/** Récupère un enregistrement par sa clé primaire. */
-export async function dbGetParId<T>(store: StoreName, id: string): Promise<T | undefined> {
-  const s = await tx(store);
-  return promesse<T>(s.get(id));
-}
-
-/** Récupère tous les enregistrements d'un store. */
-export async function dbGetTous<T>(store: StoreName): Promise<T[]> {
-  const s = await tx(store);
-  return promesse<T[]>(s.getAll());
-}
-
-/** Récupère des enregistrements via un index. */
-export async function dbGetParIndex<T>(
-  store: StoreName,
-  index: string,
-  valeur: IDBValidKey
-): Promise<T[]> {
-  const s   = await tx(store);
-  const idx = s.index(index);
-  return promesse<T[]>(idx.getAll(valeur));
-}
-
-/** Met à jour (put) un enregistrement existant. */
-export async function dbMettreAJour<T>(store: StoreName, data: T): Promise<T> {
-  const s = await tx(store, "readwrite");
-  await promesse(s.put(data));
-  return data;
-}
-
-/** Supprime un enregistrement par sa clé primaire. */
-export async function dbSupprimer(store: StoreName, id: string): Promise<void> {
-  const s = await tx(store, "readwrite");
-  await promesse(s.delete(id));
-}
-
-/** Vide entièrement un store. */
-export async function dbVider(store: StoreName): Promise<void> {
-  const s = await tx(store, "readwrite");
-  await promesse(s.clear());
-}
-
-// ── Utilitaire ───────────────────────────────────────────────
-
-/** Génère un numéro de ticket humainement lisible. */
-export function genererNumeroTicket(): string {
-  const d   = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `TK-${date}-${rand}`;
-}
-
-/** Génère un UUID v4 simple (sans dépendance externe). */
-export function genererUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+ 
