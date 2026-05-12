@@ -3,144 +3,148 @@
 // Hook React pour la gestion des vêtements en IndexedDB
 // Fournit : liste des vêtements + fonctions CRUD + changement de statut
 // ============================================================
-
-import { useState, useEffect, useCallback } from 'react';
-import { getDB } from '../index';
-import { STORES } from '../schema';
-import type { Vetement, StatutVetement } from '../../types';
-
-/**
- * useVetements — hook personnalisé pour les vêtements.
- *
- * Utilisation dans un composant :
- *   const { vetements, ajouterVetement, changerStatut } = useVetements();
- *   // Ou filtré par client :
- *   const { vetements } = useVetements(idClient);
- */
+ 
+import { useState, useEffect, useCallback } from "react";
+import {
+  dbAjouter, dbGetTous, dbGetParId, dbGetParIndex,
+  dbMettreAJour, dbSupprimer, genererUUID, genererNumeroTicket,
+} from "../index";
+import { STORES } from "../schema";
+import type { Vetement, CreateVetementDTO, UpdateVetementDTO } from "../../types";
+import { StatutVetement } from "../../types";
+ 
 export function useVetements(idClientFiltre?: string) {
   const [vetements, setVetements] = useState<Vetement[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
+  const [loading,   setLoading]   = useState<boolean>(true);
+  const [erreur,    setErreur]    = useState<string | null>(null);
+ 
   // ── Charger les vêtements ──────────────────────────────────
-  const chargerVetements = useCallback(async () => {
+  const charger = useCallback(async () => {
     try {
       setLoading(true);
-      const db = await getDB();
-
-      let tous: Vetement[];
-
+      setErreur(null);
+      let data = await dbGetTous<Vetement>(STORES.VETEMENTS);
+      // Filtrer par client si un filtre est passé
       if (idClientFiltre) {
-        // Utilise l'index 'by_client' pour ne récupérer que les vêtements
-        // du client spécifié (plus efficace que de tout charger et filtrer)
-        tous = await db.getAllFromIndex(
-          STORES.VETEMENTS,
-          'by_client',
-          idClientFiltre
-        ) as Vetement[];
-      } else {
-        tous = await db.getAll(STORES.VETEMENTS) as Vetement[];
+        data = data.filter((v) => v.idClient === idClientFiltre);
       }
-
-      setVetements(tous);
-      setError(null);
+      setVetements(data);
     } catch (e) {
-      setError('Erreur lors du chargement des vêtements');
+      setErreur("Erreur lors du chargement des vêtements");
       console.error(e);
     } finally {
       setLoading(false);
     }
   }, [idClientFiltre]);
-
-  useEffect(() => {
-    chargerVetements();
-  }, [chargerVetements]);
-
-  // ── Ajouter un vêtement ────────────────────────────────────
-  const ajouterVetement = useCallback(async (
-    data: Omit<Vetement, 'id' | 'dateDepot' | 'idStatut'>
-  ): Promise<void> => {
-    try {
-      const db = await getDB();
-      const nouveauVetement: Vetement = {
-        ...data,
-        id: crypto.randomUUID(),
-        dateDepot: new Date().toISOString(),  // Date de dépôt = maintenant
-        idStatut: 'en_attente',               // Statut initial
+ 
+  useEffect(() => { charger(); }, [charger]);
+ 
+  // ── Enregistrer un vêtement ────────────────────────────────
+  const enregistrerVetement = useCallback(
+    async (dto: CreateVetementDTO): Promise<Vetement> => {
+      const nouveau: Vetement = {
+        ...dto,
+        id:           genererUUID(),
+        numeroTicket: genererNumeroTicket(),
+        idStatut:     StatutVetement.EN_ATTENTE,
+        dateDepot:    new Date().toISOString(),
       };
-      await db.add(STORES.VETEMENTS, nouveauVetement);
-      await chargerVetements();
-    } catch (e) {
-      setError("Erreur lors de l'ajout du vêtement");
-      console.error(e);
-    }
-  }, [chargerVetements]);
-
-  // ── Changer le statut d'un vêtement ───────────────────────
-  /**
-   * Workflow autorisé :
-   *   en_attente → en_lavage → pret → recupere
-   * Cette fonction ne vérifie pas l'ordre (laissé à la logique métier).
-   */
-  const changerStatut = useCallback(async (
-    id: string,
-    nouveauStatut: StatutVetement
-  ): Promise<void> => {
-    try {
-      const db = await getDB();
-      // Récupérer le vêtement actuel
-      const vetement = await db.get(STORES.VETEMENTS, id) as Vetement | undefined;
-      if (!vetement) {
-        setError('Vêtement introuvable');
-        return;
-      }
-      // Mettre à jour uniquement le statut
-      await db.put(STORES.VETEMENTS, { ...vetement, idStatut: nouveauStatut });
-      await chargerVetements();
-    } catch (e) {
-      setError('Erreur lors du changement de statut');
-      console.error(e);
-    }
-  }, [chargerVetements]);
-
+      await dbAjouter<Vetement>(STORES.VETEMENTS, nouveau);
+      setVetements((prev) => [...prev, nouveau]);
+      return nouveau;
+    },
+    []
+  );
+ 
+  // ── Obtenir un vêtement par ID ─────────────────────────────
+  const getVetementParId = useCallback(
+    async (id: string): Promise<Vetement | undefined> =>
+      dbGetParId<Vetement>(STORES.VETEMENTS, id),
+    []
+  );
+ 
+  // ── Vêtements d'un client ──────────────────────────────────
+  const getVetementsParClient = useCallback(
+    async (clientId: string): Promise<Vetement[]> =>
+      dbGetParIndex<Vetement>(STORES.VETEMENTS, "idClient", clientId),
+    []
+  );
+ 
+  // ── Filtrer par statut (côté mémoire) ─────────────────────
+  const filtrerParStatut = useCallback(
+    (statut: StatutVetement): Vetement[] =>
+      vetements.filter((v) => v.idStatut === statut),
+    [vetements]
+  );
+ 
+  const getLaves    = useCallback(
+    () => filtrerParStatut(StatutVetement.LAVE),
+    [filtrerParStatut]
+  );
+ 
+  const getNonLaves = useCallback(
+    () => vetements.filter((v) =>
+      v.idStatut === StatutVetement.EN_ATTENTE ||
+      v.idStatut === StatutVetement.EN_COURS
+    ),
+    [vetements]
+  );
+ 
   // ── Modifier un vêtement ───────────────────────────────────
-  const modifierVetement = useCallback(async (vetement: Vetement): Promise<void> => {
-    try {
-      const db = await getDB();
-      await db.put(STORES.VETEMENTS, vetement);
-      await chargerVetements();
-    } catch (e) {
-      setError('Erreur lors de la modification du vêtement');
-      console.error(e);
-    }
-  }, [chargerVetements]);
-
+  const modifierVetement = useCallback(
+    async (id: string, maj: UpdateVetementDTO): Promise<Vetement> => {
+      const existant = await dbGetParId<Vetement>(STORES.VETEMENTS, id);
+      if (!existant) throw new Error("Vêtement introuvable");
+ 
+      const majComplet: Vetement = { ...existant, ...maj };
+      await dbMettreAJour<Vetement>(STORES.VETEMENTS, majComplet);
+      setVetements((prev) => prev.map((v) => (v.id === id ? majComplet : v)));
+      return majComplet;
+    },
+    []
+  );
+ 
+  // ── Changer le statut ──────────────────────────────────────
+  /**
+   * Workflow : en_attente → en_lavage → pret → recupere
+   */
+  const changerStatut = useCallback(
+    async (id: string, statut: StatutVetement): Promise<Vetement> => {
+      const extra: Partial<Vetement> = { idStatut: statut };
+      if (statut === StatutVetement.LAVE)     extra.dateLavage       = new Date().toISOString();
+      if (statut === StatutVetement.RECUPERE) extra.dateRecuperation = new Date().toISOString();
+      return modifierVetement(id, extra);
+    },
+    [modifierVetement]
+  );
+ 
+  const marquerEnCours  = useCallback((id: string) => changerStatut(id, StatutVetement.EN_COURS),  [changerStatut]);
+  const marquerLave     = useCallback((id: string) => changerStatut(id, StatutVetement.LAVE),      [changerStatut]);
+  const marquerRecupere = useCallback((id: string) => changerStatut(id, StatutVetement.RECUPERE),  [changerStatut]);
+ 
   // ── Supprimer un vêtement ──────────────────────────────────
   const supprimerVetement = useCallback(async (id: string): Promise<void> => {
-    try {
-      const db = await getDB();
-      await db.delete(STORES.VETEMENTS, id);
-      await chargerVetements();
-    } catch (e) {
-      setError('Erreur lors de la suppression du vêtement');
-      console.error(e);
-    }
-  }, [chargerVetements]);
-
-  // ── Filtrer par statut (côté mémoire) ─────────────────────
-  const filtrerParStatut = useCallback((statut: StatutVetement): Vetement[] => {
-    return vetements.filter(v => v.idStatut === statut);
-  }, [vetements]);
-
+    await dbSupprimer(STORES.VETEMENTS, id);
+    setVetements((prev) => prev.filter((v) => v.id !== id));
+  }, []);
+ 
   return {
     vetements,
     loading,
-    error,
-    ajouterVetement,
-    modifierVetement,
-    supprimerVetement,
-    changerStatut,
+    erreur,
+    charger,
+    enregistrerVetement,
+    getVetementParId,
+    getVetementsParClient,
     filtrerParStatut,
-    recharger: chargerVetements,
+    getLaves,
+    getNonLaves,
+    modifierVetement,
+    changerStatut,
+    marquerEnCours,
+    marquerLave,
+    marquerRecupere,
+    supprimerVetement,
   };
 }
+ 
