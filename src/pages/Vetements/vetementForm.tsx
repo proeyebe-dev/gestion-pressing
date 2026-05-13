@@ -10,14 +10,25 @@ export default function VetementForm() {
   const [idClient, setIdClient] = useState('');
   const [success, setSuccess] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [errors, setErrors] = useState<{type?: string; couleur?: string; description?: string; idClient?: string}>({});
+  const validate = () => {
+    const newErrors: {type?: string; couleur?: string; description?: string; idClient?: string} = {};
+    if (!idClient) newErrors.idClient = 'Veuillez sélectionner un client';
+    if (!type) newErrors.type = 'Le type est obligatoire';
+    if (!couleur) newErrors.couleur = 'La couleur est obligatoire';
+    if (!description) newErrors.description = 'La description est obligatoire';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!type || !couleur || !description || !idClient) return;
+    if (!validate()) return;
     await addVetement({ type, couleur, description, idClient });
     setType('');
     setCouleur('');
     setDescription('');
     setIdClient('');
+    setErrors({});
     setSuccess(true);
     setShowForm(false);
     setTimeout(() => setSuccess(false), 3000);
@@ -70,7 +81,7 @@ export default function VetementForm() {
               <select
                 value={idClient}
                 onChange={e => setIdClient(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.idClient ? 'border-red-400' : 'border-white/20'} text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               >
                 <option value="" className="bg-slate-800">-- Sélectionner un client --</option>
                 {clients.map(client => (
@@ -79,6 +90,7 @@ export default function VetementForm() {
                   </option>
                 ))}
               </select>
+              {errors.idClient && <p className="text-red-400 text-xs mt-1">{errors.idClient}</p>}
             </div>
             {/* Type */}
             <div className="mb-4">
@@ -88,8 +100,9 @@ export default function VetementForm() {
                 value={type}
                 onChange={e => setType(e.target.value)}
                 placeholder="Ex: Chemise, Pantalon, Robe..."
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.type ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.type && <p className="text-red-400 text-xs mt-1">{errors.type}</p>}
             </div>
             {/* Couleur */}
             <div className="mb-4">
@@ -99,8 +112,9 @@ export default function VetementForm() {
                 value={couleur}
                 onChange={e => setCouleur(e.target.value)}
                 placeholder="Ex: Bleu, Rouge, Noir..."
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.couleur ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.couleur && <p className="text-red-400 text-xs mt-1">{errors.couleur}</p>}
             </div>
             {/* Description */}
             <div className="mb-4">
@@ -110,8 +124,9 @@ export default function VetementForm() {
                 onChange={e => setDescription(e.target.value)}
                 placeholder="Ex: Taches sur le col, à laver à froid..."
                 rows={3}
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.description ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.description && <p className="text-red-400 text-xs mt-1">{errors.description}</p>}
             </div>
             {/* Date automatique */}
             <div className="mb-6">

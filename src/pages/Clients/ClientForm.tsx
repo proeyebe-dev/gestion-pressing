@@ -7,13 +7,23 @@ export default function ClientForm() {
   const [adresse, setAdresse] = useState('');
   const [success, setSuccess] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [errors, setErrors] = useState<{nom?: string; telephone?: string; adresse?: string}>({});
+  const validate = () => {
+    const newErrors: {nom?: string; telephone?: string; adresse?: string} = {};
+    if (!nom) newErrors.nom = 'Le nom est obligatoire';
+    if (!telephone) newErrors.telephone = 'Le téléphone est obligatoire';
+    if (!adresse) newErrors.adresse = "L'adresse est obligatoire";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nom || !telephone || !adresse) return;
+    if (!validate()) return;
     await addClient({ nom, telephone, adresse });
     setNom('');
     setTelephone('');
     setAdresse('');
+    setErrors({});
     setSuccess(true);
     setShowForm(false);
     setTimeout(() => setSuccess(false), 3000);
@@ -55,8 +65,9 @@ export default function ClientForm() {
                 value={nom}
                 onChange={e => setNom(e.target.value)}
                 placeholder="Ex: Marie Dupont"
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.nom ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.nom && <p className="text-red-400 text-xs mt-1">{errors.nom}</p>}
             </div>
             <div className="mb-4">
               <label className="block text-blue-200 text-sm font-medium mb-1">Téléphone</label>
@@ -65,8 +76,9 @@ export default function ClientForm() {
                 value={telephone}
                 onChange={e => setTelephone(e.target.value)}
                 placeholder="Ex: 06 12 34 56 78"
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.telephone ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.telephone && <p className="text-red-400 text-xs mt-1">{errors.telephone}</p>}
             </div>
             <div className="mb-6">
               <label className="block text-blue-200 text-sm font-medium mb-1">Adresse</label>
@@ -75,8 +87,9 @@ export default function ClientForm() {
                 value={adresse}
                 onChange={e => setAdresse(e.target.value)}
                 placeholder="Ex: 12 rue des Fleurs"
-                className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                className={`w-full bg-white/10 border ${errors.adresse ? 'border-red-400' : 'border-white/20'} text-white placeholder-white/40 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-yellow-400`}
               />
+              {errors.adresse && <p className="text-red-400 text-xs mt-1">{errors.adresse}</p>}
             </div>
             <div className="flex gap-3">
               <button
