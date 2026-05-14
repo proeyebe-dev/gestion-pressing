@@ -202,7 +202,7 @@ export default function Login({ onLogin }: LoginProps) {
           }}
         >
           PressingPro v1.0 © 2024
-        </div>
+        </div>// Mise a jour UI
       </div>
     </div>
   );
