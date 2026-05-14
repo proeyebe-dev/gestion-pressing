@@ -198,7 +198,7 @@ export default function Login({ onLogin }: LoginProps) {
             textAlign: "center",
             fontSize: 11,
             color: "#9ca3af",
-            marginTop: 24,
+            marginTop: 24,//modification
           }}
         >
           PressingPro v1.0 © 2024
